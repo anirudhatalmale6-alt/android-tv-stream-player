@@ -74,6 +74,9 @@ dependencies {
     // RTMP support via extra data source
     implementation("androidx.media3:media3-datasource-rtmp:1.2.1")
 
+    // SRT protocol support (native libsrt bindings)
+    implementation("io.github.thibaultbee.srtdroid:srtdroid-core:1.8.0")
+
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-process:2.7.0")

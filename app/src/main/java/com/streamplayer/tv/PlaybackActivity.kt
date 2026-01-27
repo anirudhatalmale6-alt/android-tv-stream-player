@@ -234,10 +234,10 @@ class PlaybackActivity : AppCompatActivity() {
                     .setAllowChunklessPreparation(true)
                     .createMediaSource(MediaItem.fromUri(uri))
             }
-            // SRT — handled via FFmpeg extension (progressive source with srt:// scheme)
+            // SRT — via srtdroid native libsrt bindings
             scheme == "srt" -> {
-                val dataSourceFactory = DefaultDataSource.Factory(this)
-                ProgressiveMediaSource.Factory(dataSourceFactory)
+                val srtFactory = SrtDataSource.Factory()
+                ProgressiveMediaSource.Factory(srtFactory)
                     .createMediaSource(MediaItem.fromUri(uri))
             }
             // Default: progressive (also catches HTTP/HTTPS direct streams)
