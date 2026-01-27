@@ -4,7 +4,7 @@ A lightweight, rock-solid streaming player built for Android TV and Android-base
 
 ## Features
 
-- **Protocol Support**: RTMP, RTMPS, HLS (HTTP/HTTPS), and progressive HTTP streams
+- **Protocol Support**: SRT, RTMP, RTMPS, HLS (HTTP/HTTPS), and progressive HTTP streams
 - **Auto-Start on Boot**: Launches automatically when the device powers on
 - **Auto-Play**: Begins playback immediately on launch
 - **Automatic Reconnection**: Exponential backoff reconnection (2s → 4s → 8s → … → 30s max) on stream drops
@@ -35,9 +35,8 @@ adb install StreamPlayer-release.apk
 | RTMPS | `rtmps://server:443/live/stream` |
 | HLS | `https://server/path/stream.m3u8` |
 | HTTP/HTTPS | `https://server/path/stream.ts` |
-| SRT* | `srt://server:port` |
-
-*\*SRT support requires the FFmpeg native extension to be compiled and included. The current build includes the data pipeline for SRT URIs; full SRT decoding requires building the Media3 FFmpeg extension from source with libsrt enabled. See [SRT Support](#srt-support) below.*
+| SRT | `srt://server:9000` |
+| SRT (with options) | `srt://server:9000?streamid=mystream&latency=200` |
 
 ## Build from Source
 
@@ -75,6 +74,7 @@ Output APKs:
 | Media3 HLS | 1.2.1 | HLS stream support |
 | Media3 RTMP DataSource | 1.2.1 | RTMP/RTMPS stream support |
 | Media3 UI | 1.2.1 | Player view component |
+| [srtdroid](https://github.com/ThibaultBee/srtdroid) | 1.8.0 | Native SRT protocol (Haivision libsrt) |
 | AndroidX Leanback | 1.0.0 | Android TV launcher integration |
 
 ## Architecture
@@ -84,6 +84,7 @@ com.streamplayer.tv/
 ├── PlaybackActivity.kt   — Full-screen playback, ExoPlayer setup, reconnection logic
 ├── SettingsActivity.kt   — Stream URL input, auto-play toggle
 ├── PlaybackService.kt    — Foreground service + wake lock for 24/7 operation
+├── SrtDataSource.kt      — Custom Media3 DataSource for SRT protocol via libsrt
 ├── BootReceiver.kt       — BOOT_COMPLETED receiver for auto-launch
 └── StreamPrefs.kt        — SharedPreferences wrapper for URL storage
 ```
@@ -100,12 +101,29 @@ The stream URL is stored in SharedPreferences and configured via the in-app sett
 
 ## SRT Support
 
-SRT protocol support requires the Media3 FFmpeg extension compiled with `libsrt`. The current build routes `srt://` URIs through the progressive media source pipeline. For full SRT support:
+SRT is natively supported via [srtdroid](https://github.com/ThibaultBee/srtdroid), which bundles pre-built Haivision `libsrt` binaries for all Android ABIs (armeabi-v7a, arm64-v8a, x86, x86_64).
 
-1. Clone the [Media3 source](https://github.com/androidx/media)
-2. Build the FFmpeg extension with `--enable-libsrt`
-3. Include the resulting `.aar` in the `libs/` folder
-4. Update `build.gradle.kts` to include the local FFmpeg AAR
+**SRT URL format:**
+```
+srt://host:port[?param=value&...]
+```
+
+**Supported URL parameters:**
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `streamid` | SRT stream ID | `streamid=mystream` |
+| `latency` | Latency in ms (default: 200) | `latency=500` |
+| `passphrase` | Encryption passphrase | `passphrase=secret` |
+| `mode` | Connection mode (caller) | `mode=caller` |
+| `transtype` | Transport type (live) | `transtype=live` |
+
+**Testing with FFmpeg:**
+```bash
+# Start an SRT listener on your machine:
+ffmpeg -re -i input.mp4 -c copy -f mpegts "srt://0.0.0.0:9000?mode=listener"
+
+# Then enter in the app: srt://<your-ip>:9000
+```
 
 ## Signing
 
