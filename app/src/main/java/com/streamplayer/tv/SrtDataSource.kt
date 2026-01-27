@@ -9,27 +9,28 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import io.github.thibaultbee.srtdroid.core.enums.SockOpt
 import io.github.thibaultbee.srtdroid.core.enums.Transtype
-import io.github.thibaultbee.srtdroid.core.extensions.connect
 import io.github.thibaultbee.srtdroid.core.models.SrtSocket
-import io.github.thibaultbee.srtdroid.core.models.SrtUrl
 import java.io.IOException
+import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * Media3 DataSource for SRT protocol using srtdroid (Haivision libsrt bindings).
  *
- * Accepts URIs like: srt://host:port?streamid=mystream&latency=200
+ * Accepts standard SRT URLs:
+ *   srt://host:port?streamid=mystream&latency=200&passphrase=secret&pbkeylen=24&tsbpdmode
  *
- * Works in caller mode (connects to an SRT listener/server).
- * Receives MPEG-TS packets (188 bytes each) packed into 1316-byte SRT payloads.
+ * Normalizes common parameter aliases (tsbpdmode → tsbpd, etc.) and handles
+ * bare boolean flags (e.g. &tsbpdmode with no value).
  */
 @UnstableApi
 class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
 
     companion object {
         private const val TAG = "SrtDataSource"
-        private const val SRT_PAYLOAD_SIZE = 1316        // Standard SRT payload (7 * 188)
-        private const val TS_PACKET_SIZE = 188            // MPEG-TS packet size
+        private const val SRT_PAYLOAD_SIZE = 1316
+        private const val TS_PACKET_SIZE = 188
+        private const val DEFAULT_CONNECT_TIMEOUT_MS = 10000
     }
 
     private val packetQueue = ConcurrentLinkedQueue<ByteArray>()
@@ -42,27 +43,152 @@ class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
         val uri = dataSpec.uri
         currentUri = uri
 
-        // Parse SRT URL — extracts host, port, and all SRT options from query params
-        val srtUrl = SrtUrl(uri)
+        val host = uri.host ?: throw IOException("SRT URL missing host")
+        val port = uri.port.takeIf { it > 0 } ?: throw IOException("SRT URL missing port")
 
-        Log.i(TAG, "Opening SRT connection to ${srtUrl.hostname}:${srtUrl.port}")
+        // Parse query parameters into a map, normalizing aliases
+        val params = parseAndNormalizeParams(uri)
+
+        Log.i(TAG, "Opening SRT connection to $host:$port with params: $params")
 
         try {
             val sock = SrtSocket()
 
-            // Set defaults that SrtUrl may not specify
+            // --- Pre-bind options (must be set before connect) ---
+
+            // Transport type: always live for streaming
             sock.setSockFlag(SockOpt.TRANSTYPE, Transtype.LIVE)
+
+            // Synchronous receive
             sock.setSockFlag(SockOpt.RCVSYN, true)
 
-            // connect(SrtUrl) extension applies all URL-specified options
-            // (latency, passphrase, streamid, etc.) before connecting
-            sock.connect(srtUrl)
+            // Connection timeout
+            val connectTimeout = params["connect_timeout"]?.toIntOrNull() ?: DEFAULT_CONNECT_TIMEOUT_MS
+            sock.setSockFlag(SockOpt.CONNTIMEO, connectTimeout)
+
+            // Latency
+            params["latency"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.LATENCY, it)
+            }
+
+            // Receiver latency
+            params["rcvlatency"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.RCVLATENCY, it)
+            }
+
+            // Peer latency
+            params["peerlatency"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.PEERLATENCY, it)
+            }
+
+            // Encryption passphrase (must be set before pbkeylen)
+            params["passphrase"]?.let {
+                if (it.isNotEmpty()) {
+                    sock.setSockFlag(SockOpt.PASSPHRASE, it)
+                }
+            }
+
+            // Encryption key length (16, 24, or 32)
+            params["pbkeylen"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.PBKEYLEN, it)
+            }
+
+            // Timestamp-based packet delivery mode
+            params["tsbpd"]?.let {
+                val enabled = it.isEmpty() || it == "1" || it.equals("true", ignoreCase = true)
+                sock.setSockFlag(SockOpt.TSBPDMODE, enabled)
+            }
+
+            // Stream ID
+            params["streamid"]?.let {
+                sock.setSockFlag(SockOpt.STREAMID, it)
+            }
+            // Alternative: srt_streamid
+            params["srt_streamid"]?.let {
+                sock.setSockFlag(SockOpt.STREAMID, it)
+            }
+
+            // Too-late packet drop
+            params["tlpktdrop"]?.let {
+                val enabled = it.isEmpty() || it == "1" || it.equals("true", ignoreCase = true)
+                sock.setSockFlag(SockOpt.TLPKTDROP, enabled)
+            }
+
+            // NAK report
+            params["nakreport"]?.let {
+                val enabled = it.isEmpty() || it == "1" || it.equals("true", ignoreCase = true)
+                sock.setSockFlag(SockOpt.NAKREPORT, enabled)
+            }
+
+            // Max segment size
+            params["mss"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.MSS, it)
+            }
+
+            // Payload size
+            params["payload_size"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.PAYLOADSIZE, it)
+            }
+            params["pkt_size"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.PAYLOADSIZE, it)
+            }
+
+            // Input bandwidth
+            params["inputbw"]?.toLongOrNull()?.let {
+                sock.setSockFlag(SockOpt.INPUTBW, it)
+            }
+
+            // Max bandwidth
+            params["maxbw"]?.toLongOrNull()?.let {
+                sock.setSockFlag(SockOpt.MAXBW, it)
+            }
+
+            // Overhead bandwidth
+            params["oheadbw"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.OHEADBW, it)
+            }
+
+            // Enforced encryption
+            params["enforced_encryption"]?.let {
+                val enabled = it.isEmpty() || it == "1" || it.equals("true", ignoreCase = true)
+                sock.setSockFlag(SockOpt.ENFORCEDENCRYPTION, enabled)
+            }
+
+            // Linger
+            params["linger"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.LINGER, it)
+            }
+
+            // Flight flag size
+            params["ffs"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.FC, it)
+            }
+
+            // Send/recv buffer sizes
+            params["sndbuf"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.SNDBUF, it)
+            }
+            params["rcvbuf"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.RCVBUF, it)
+            }
+
+            // IP TOS / TTL
+            params["iptos"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.IPTOS, it)
+            }
+            params["ipttl"]?.toIntOrNull()?.let {
+                sock.setSockFlag(SockOpt.IPTTL, it)
+            }
+
+            // Connect
+            Log.i(TAG, "Connecting to $host:$port...")
+            sock.connect(host, port)
 
             socket = sock
-            Log.i(TAG, "SRT connected successfully")
+            Log.i(TAG, "SRT connected successfully to $host:$port")
             transferStarted(dataSpec)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to open SRT connection: ${e.message}", e)
+            Log.e(TAG, "Failed to open SRT connection to $host:$port — ${e.message}", e)
             throw IOException("SRT connection failed: ${e.message}", e)
         }
 
@@ -125,6 +251,69 @@ class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
         socket = null
         currentUri = null
         transferEnded()
+    }
+
+    /**
+     * Parse URI query parameters and normalize common aliases.
+     * Handles bare flags like &tsbpdmode (no value) by setting them to empty string.
+     * Maps aliases: tsbpdmode → tsbpd, etc.
+     */
+    private fun parseAndNormalizeParams(uri: Uri): Map<String, String> {
+        val params = mutableMapOf<String, String>()
+
+        // Android's Uri.getQueryParameterNames() handles bare params
+        for (key in uri.queryParameterNames) {
+            val value = uri.getQueryParameter(key) ?: ""
+            val normalizedKey = normalizeParamName(key)
+            // Skip 'mode' — we always use caller mode
+            if (normalizedKey == "mode") continue
+            params[normalizedKey] = value
+        }
+
+        return params
+    }
+
+    /**
+     * Normalize common SRT parameter aliases to the canonical names
+     * used by srtdroid / Haivision libsrt.
+     */
+    private fun normalizeParamName(name: String): String {
+        return when (name.lowercase()) {
+            "tsbpdmode", "tsbpd" -> "tsbpd"
+            "pbkeylen" -> "pbkeylen"
+            "passphrase" -> "passphrase"
+            "streamid", "srt_streamid" -> "streamid"
+            "latency" -> "latency"
+            "rcvlatency" -> "rcvlatency"
+            "peerlatency" -> "peerlatency"
+            "connect_timeout", "conntimeo" -> "connect_timeout"
+            "snddropdelay" -> "snddropdelay"
+            "tlpktdrop" -> "tlpktdrop"
+            "nakreport" -> "nakreport"
+            "payload_size", "payloadsize" -> "payload_size"
+            "pkt_size", "pktsize" -> "pkt_size"
+            "inputbw" -> "inputbw"
+            "maxbw" -> "maxbw"
+            "oheadbw" -> "oheadbw"
+            "enforced_encryption" -> "enforced_encryption"
+            "linger" -> "linger"
+            "ffs" -> "ffs"
+            "mss" -> "mss"
+            "sndbuf" -> "sndbuf"
+            "rcvbuf" -> "rcvbuf"
+            "iptos" -> "iptos"
+            "ipttl" -> "ipttl"
+            "lossmaxttl" -> "lossmaxttl"
+            "minversion" -> "minversion"
+            "smoother" -> "smoother"
+            "messageapi" -> "messageapi"
+            "transtype" -> "transtype"
+            "kmrefreshrate" -> "kmrefreshrate"
+            "kmpreannounce" -> "kmpreannounce"
+            "recv_buffer_size" -> "rcvbuf"
+            "send_buffer_size" -> "sndbuf"
+            else -> name.lowercase()
+        }
     }
 
     /**
