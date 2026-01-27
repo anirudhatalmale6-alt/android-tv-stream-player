@@ -1,5 +1,6 @@
 package com.streamplayer.tv
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -11,6 +12,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -48,8 +50,20 @@ class PlaybackActivity : AppCompatActivity() {
     private var currentRetryDelay = INITIAL_RETRY_DELAY_MS
     private val handler = Handler(Looper.getMainLooper())
     private var isReconnecting = false
+    private var settingsOpen = false
 
     private val retryRunnable = Runnable { startPlayback() }
+
+    // Launched when returning from SettingsActivity
+    private val settingsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        settingsOpen = false
+        // Always restart playback when returning from settings,
+        // whether the user saved (RESULT_OK) or pressed back
+        Log.i(TAG, "Returned from settings — restarting playback")
+        fullRestartPlayback()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -126,21 +140,10 @@ class PlaybackActivity : AppCompatActivity() {
     }
 
     private fun openSettings() {
+        if (settingsOpen) return
+        settingsOpen = true
         val intent = Intent(this, SettingsActivity::class.java)
-        startActivity(intent)
-    }
-
-    // Called when returning from SettingsActivity
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-        // Reload with potentially new URL
-        restartPlayback()
-    }
-
-    override fun onRestart() {
-        super.onRestart()
-        // User might have changed URL in settings
-        restartPlayback()
+        settingsLauncher.launch(intent)
     }
 
     private fun initializePlayer() {
@@ -214,6 +217,21 @@ class PlaybackActivity : AppCompatActivity() {
         player?.stop()
         player?.clearMediaItems()
         startPlayback()
+    }
+
+    /**
+     * Fully release the player and recreate it from scratch.
+     * Required for SRT: the old SrtDataSource may still be blocking on recv(),
+     * so stop/clear alone isn't enough — we need to release() to force-close
+     * the socket, then build a fresh player instance.
+     */
+    private fun fullRestartPlayback() {
+        handler.removeCallbacks(retryRunnable)
+        isReconnecting = false
+        currentRetryDelay = INITIAL_RETRY_DELAY_MS
+
+        releasePlayer()
+        initializePlayer()
     }
 
     private fun buildMediaSource(url: String): MediaSource {

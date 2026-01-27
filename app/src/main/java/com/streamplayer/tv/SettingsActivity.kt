@@ -52,6 +52,11 @@ class SettingsActivity : AppCompatActivity() {
         StreamPrefs.setAutoPlay(this, autoPlaySwitch.isChecked)
 
         Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show()
+        setResult(RESULT_OK)
         finish()
+    }
+
+    companion object {
+        const val REQUEST_CODE = 1001
     }
 }
