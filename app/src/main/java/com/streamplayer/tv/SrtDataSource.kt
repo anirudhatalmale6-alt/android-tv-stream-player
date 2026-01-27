@@ -11,7 +11,6 @@ import io.github.thibaultbee.srtdroid.core.enums.SockOpt
 import io.github.thibaultbee.srtdroid.core.enums.Transtype
 import io.github.thibaultbee.srtdroid.core.models.SrtSocket
 import java.io.IOException
-import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
@@ -20,8 +19,8 @@ import java.util.concurrent.ConcurrentLinkedQueue
  * Accepts standard SRT URLs:
  *   srt://host:port?streamid=mystream&latency=200&passphrase=secret&pbkeylen=24&tsbpdmode
  *
- * Normalizes common parameter aliases (tsbpdmode → tsbpd, etc.) and handles
- * bare boolean flags (e.g. &tsbpdmode with no value).
+ * Passes raw received bytes directly to ExoPlayer — the TsExtractor handles
+ * MPEG-TS packet boundary detection internally.
  */
 @UnstableApi
 class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
@@ -29,11 +28,13 @@ class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
     companion object {
         private const val TAG = "SrtDataSource"
         private const val SRT_PAYLOAD_SIZE = 1316
-        private const val TS_PACKET_SIZE = 188
         private const val DEFAULT_CONNECT_TIMEOUT_MS = 10000
     }
 
-    private val packetQueue = ConcurrentLinkedQueue<ByteArray>()
+    // Buffer for received SRT data not yet consumed by ExoPlayer
+    private var pendingData: ByteArray? = null
+    private var pendingOffset = 0
+
     private var socket: SrtSocket? = null
     private var currentUri: Uri? = null
 
@@ -46,15 +47,12 @@ class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
         val host = uri.host ?: throw IOException("SRT URL missing host")
         val port = uri.port.takeIf { it > 0 } ?: throw IOException("SRT URL missing port")
 
-        // Parse query parameters into a map, normalizing aliases
         val params = parseAndNormalizeParams(uri)
 
         Log.i(TAG, "Opening SRT connection to $host:$port with params: $params")
 
         try {
             val sock = SrtSocket()
-
-            // --- Pre-bind options (must be set before connect) ---
 
             // Transport type: always live for streaming
             sock.setSockFlag(SockOpt.TRANSTYPE, Transtype.LIVE)
@@ -103,7 +101,6 @@ class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
             params["streamid"]?.let {
                 sock.setSockFlag(SockOpt.STREAMID, it)
             }
-            // Alternative: srt_streamid
             params["srt_streamid"]?.let {
                 sock.setSockFlag(SockOpt.STREAMID, it)
             }
@@ -201,36 +198,40 @@ class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
         val sock = socket ?: throw IOException("SRT socket is not connected")
 
         try {
-            // If queue is empty, receive a new SRT payload
-            if (packetQueue.isEmpty()) {
-                val received = sock.recv(SRT_PAYLOAD_SIZE)
-                if (received.isEmpty()) {
-                    return C.RESULT_END_OF_INPUT
+            // If we have leftover data from a previous recv, serve that first
+            val pending = pendingData
+            if (pending != null && pendingOffset < pending.size) {
+                val remaining = pending.size - pendingOffset
+                val toCopy = minOf(remaining, length)
+                System.arraycopy(pending, pendingOffset, buffer, offset, toCopy)
+                pendingOffset += toCopy
+                if (pendingOffset >= pending.size) {
+                    pendingData = null
+                    pendingOffset = 0
                 }
-
-                // Split received data into TS packets and queue them
-                val numPackets = received.size / TS_PACKET_SIZE
-                for (i in 0 until numPackets) {
-                    val tsPacket = received.copyOfRange(
-                        i * TS_PACKET_SIZE,
-                        (i + 1) * TS_PACKET_SIZE
-                    )
-                    packetQueue.offer(tsPacket)
-                }
+                bytesTransferred(toCopy)
+                return toCopy
             }
 
-            // Drain queued TS packets into the output buffer
-            var bytesRead = 0
-            while (bytesRead + TS_PACKET_SIZE <= length) {
-                val packet = packetQueue.poll() ?: break
-                System.arraycopy(packet, 0, buffer, offset + bytesRead, TS_PACKET_SIZE)
-                bytesRead += TS_PACKET_SIZE
+            // Receive a new SRT payload (blocking call)
+            val received = sock.recv(SRT_PAYLOAD_SIZE)
+            if (received.isEmpty()) {
+                Log.w(TAG, "SRT recv returned empty — stream may have ended")
+                return C.RESULT_END_OF_INPUT
             }
 
-            if (bytesRead > 0) {
-                bytesTransferred(bytesRead)
+            // Copy as much as fits into the output buffer
+            val toCopy = minOf(received.size, length)
+            System.arraycopy(received, 0, buffer, offset, toCopy)
+
+            // Store remainder if any
+            if (toCopy < received.size) {
+                pendingData = received
+                pendingOffset = toCopy
             }
-            return bytesRead
+
+            bytesTransferred(toCopy)
+            return toCopy
 
         } catch (e: Exception) {
             Log.e(TAG, "SRT read error: ${e.message}", e)
@@ -242,7 +243,8 @@ class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
 
     override fun close() {
         Log.i(TAG, "Closing SRT connection")
-        packetQueue.clear()
+        pendingData = null
+        pendingOffset = 0
         try {
             socket?.close()
         } catch (e: Exception) {
@@ -255,28 +257,18 @@ class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
 
     /**
      * Parse URI query parameters and normalize common aliases.
-     * Handles bare flags like &tsbpdmode (no value) by setting them to empty string.
-     * Maps aliases: tsbpdmode → tsbpd, etc.
      */
     private fun parseAndNormalizeParams(uri: Uri): Map<String, String> {
         val params = mutableMapOf<String, String>()
-
-        // Android's Uri.getQueryParameterNames() handles bare params
         for (key in uri.queryParameterNames) {
             val value = uri.getQueryParameter(key) ?: ""
             val normalizedKey = normalizeParamName(key)
-            // Skip 'mode' — we always use caller mode
             if (normalizedKey == "mode") continue
             params[normalizedKey] = value
         }
-
         return params
     }
 
-    /**
-     * Normalize common SRT parameter aliases to the canonical names
-     * used by srtdroid / Haivision libsrt.
-     */
     private fun normalizeParamName(name: String): String {
         return when (name.lowercase()) {
             "tsbpdmode", "tsbpd" -> "tsbpd"

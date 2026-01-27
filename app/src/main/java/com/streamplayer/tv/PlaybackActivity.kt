@@ -25,6 +25,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
+import androidx.media3.extractor.ts.TsExtractor
 import androidx.media3.ui.PlayerView
 
 @UnstableApi
@@ -237,7 +240,12 @@ class PlaybackActivity : AppCompatActivity() {
             // SRT — via srtdroid native libsrt bindings
             scheme == "srt" -> {
                 val srtFactory = SrtDataSource.Factory()
-                ProgressiveMediaSource.Factory(srtFactory)
+                // SRT carries MPEG-TS — tell ExoPlayer explicitly so it
+                // doesn't waste time sniffing the container format
+                val tsExtractorFactory = DefaultExtractorsFactory()
+                    .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES)
+                    .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
+                ProgressiveMediaSource.Factory(srtFactory, tsExtractorFactory)
                     .createMediaSource(MediaItem.fromUri(uri))
             }
             // Default: progressive (also catches HTTP/HTTPS direct streams)
