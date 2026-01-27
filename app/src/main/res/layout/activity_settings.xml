@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#E0000000"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="48dp">
+
+    <!-- Settings card -->
+    <LinearLayout
+        android:layout_width="500dp"
+        android:layout_height="wrap_content"
+        android:background="@drawable/settings_bg"
+        android:orientation="vertical"
+        android:padding="32dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp"
+            android:text="Stream Settings"
+            android:textColor="@android:color/white"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="Stream URL"
+            android:textColor="#CCCCCC"
+            android:textSize="14sp" />
+
+        <EditText
+            android:id="@+id/url_input"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="@drawable/edit_text_bg"
+            android:hint="e.g. rtmp://server/live/stream"
+            android:inputType="textUri"
+            android:paddingHorizontal="12dp"
+            android:singleLine="true"
+            android:textColor="@android:color/white"
+            android:textColorHint="#888888"
+            android:textSize="14sp"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:nextFocusDown="@+id/auto_play_switch" />
+
+        <Switch
+            android:id="@+id/auto_play_switch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="Auto-play on launch"
+            android:textColor="@android:color/white"
+            android:textSize="14sp"
+            android:focusable="true"
+            android:nextFocusDown="@+id/save_button"
+            android:nextFocusUp="@+id/url_input" />
+
+        <Button
+            android:id="@+id/save_button"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="24dp"
+            android:background="@drawable/button_bg"
+            android:text="Save &amp; Play"
+            android:textColor="@android:color/white"
+            android:textSize="16sp"
+            android:focusable="true"
+            android:nextFocusUp="@+id/auto_play_switch" />
+
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Press BACK to return to playback"
+        android:textColor="#888888"
+        android:textSize="12sp" />
+
+</LinearLayout>
