@@ -48,6 +48,14 @@
             </intent-filter>
         </activity>
 
+        <!-- PIN Entry Activity -->
+        <activity
+            android:name=".PinEntryActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.StreamPlayer.Settings" />
+
         <!-- Settings Activity -->
         <activity
             android:name=".SettingsActivity"

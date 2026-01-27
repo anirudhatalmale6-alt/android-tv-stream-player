@@ -70,7 +70,20 @@
             android:textColor="@android:color/white"
             android:textSize="16sp"
             android:focusable="true"
-            android:nextFocusUp="@+id/auto_play_switch" />
+            android:nextFocusUp="@+id/auto_play_switch"
+            android:nextFocusDown="@+id/change_pin_button" />
+
+        <Button
+            android:id="@+id/change_pin_button"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/button_secondary_bg"
+            android:text="Change PIN"
+            android:textColor="@android:color/white"
+            android:textSize="14sp"
+            android:focusable="true"
+            android:nextFocusUp="@+id/save_button" />
 
     </LinearLayout>
 

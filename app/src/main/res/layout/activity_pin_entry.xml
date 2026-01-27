@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#E0000000"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="48dp">
+
+    <LinearLayout
+        android:layout_width="400dp"
+        android:layout_height="wrap_content"
+        android:background="@drawable/settings_bg"
+        android:orientation="vertical"
+        android:padding="32dp"
+        android:gravity="center_horizontal">
+
+        <TextView
+            android:id="@+id/title_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp"
+            android:text="Enter PIN to access settings"
+            android:textColor="@android:color/white"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:gravity="center" />
+
+        <EditText
+            android:id="@+id/pin_input"
+            android:layout_width="200dp"
+            android:layout_height="56dp"
+            android:background="@drawable/edit_text_bg"
+            android:gravity="center"
+            android:hint="000000"
+            android:inputType="numberPassword"
+            android:maxLength="6"
+            android:paddingHorizontal="12dp"
+            android:singleLine="true"
+            android:textColor="@android:color/white"
+            android:textColorHint="#888888"
+            android:textSize="24sp"
+            android:letterSpacing="0.3"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:nextFocusDown="@+id/submit_button" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:orientation="horizontal"
+            android:gravity="center">
+
+            <Button
+                android:id="@+id/cancel_button"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/button_secondary_bg"
+                android:text="Cancel"
+                android:textColor="@android:color/white"
+                android:textSize="14sp"
+                android:focusable="true" />
+
+            <Button
+                android:id="@+id/submit_button"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/button_bg"
+                android:text="Unlock"
+                android:textColor="@android:color/white"
+                android:textSize="14sp"
+                android:focusable="true" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Default PIN: 000000"
+        android:textColor="#888888"
+        android:textSize="12sp" />
+
+</LinearLayout>

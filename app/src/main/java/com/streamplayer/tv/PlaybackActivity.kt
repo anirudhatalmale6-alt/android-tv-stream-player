@@ -142,20 +142,27 @@ class PlaybackActivity : AppCompatActivity() {
     private fun openSettings() {
         if (settingsOpen) return
         settingsOpen = true
-        val intent = Intent(this, SettingsActivity::class.java)
+        // Launch PIN entry first — it will open SettingsActivity on success
+        val intent = Intent(this, PinEntryActivity::class.java)
+        intent.putExtra(PinEntryActivity.EXTRA_MODE, PinEntryActivity.MODE_VERIFY)
         settingsLauncher.launch(intent)
     }
 
     private fun initializePlayer() {
         if (player != null) return
 
+        // Optimized load control for live streaming to avoid audio underruns
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 15_000,
-                /* maxBufferMs = */ 60_000,
-                /* bufferForPlaybackMs = */ 2_500,
-                /* bufferForPlaybackAfterRebufferMs = */ 5_000
+                /* minBufferMs = */ 30_000,
+                /* maxBufferMs = */ 90_000,
+                /* bufferForPlaybackMs = */ 5_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 8_000
             )
+            // Prioritize keeping buffer full to avoid audio dropouts
+            .setPrioritizeTimeOverSizeThresholds(true)
+            // Larger back buffer for smooth playback
+            .setBackBuffer(/* backBufferDurationMs = */ 30_000, /* retainBackBufferFromKeyframe = */ true)
             .build()
 
         player = ExoPlayer.Builder(this)

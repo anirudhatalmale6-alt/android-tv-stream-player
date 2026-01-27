@@ -11,9 +11,11 @@ object StreamPrefs {
     private const val PREFS_NAME = "stream_player_prefs"
     private const val KEY_STREAM_URL = "stream_url"
     private const val KEY_AUTO_PLAY = "auto_play"
+    private const val KEY_PIN = "settings_pin"
 
     // Default placeholder — user replaces via settings screen
     private const val DEFAULT_URL = ""
+    private const val DEFAULT_PIN = "000000"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -31,4 +33,14 @@ object StreamPrefs {
     fun setAutoPlay(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_AUTO_PLAY, enabled).apply()
     }
+
+    fun getPin(context: Context): String =
+        prefs(context).getString(KEY_PIN, DEFAULT_PIN) ?: DEFAULT_PIN
+
+    fun setPin(context: Context, pin: String) {
+        prefs(context).edit().putString(KEY_PIN, pin).apply()
+    }
+
+    fun verifyPin(context: Context, enteredPin: String): Boolean =
+        getPin(context) == enteredPin
 }

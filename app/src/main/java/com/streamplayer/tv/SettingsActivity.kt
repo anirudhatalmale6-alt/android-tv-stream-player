@@ -1,5 +1,6 @@
 package com.streamplayer.tv
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
 import android.widget.Button
@@ -17,6 +18,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var urlInput: EditText
     private lateinit var autoPlaySwitch: Switch
     private lateinit var saveButton: Button
+    private lateinit var changePinButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,6 +27,7 @@ class SettingsActivity : AppCompatActivity() {
         urlInput = findViewById(R.id.url_input)
         autoPlaySwitch = findViewById(R.id.auto_play_switch)
         saveButton = findViewById(R.id.save_button)
+        changePinButton = findViewById(R.id.change_pin_button)
 
         // Load current values
         urlInput.setText(StreamPrefs.getStreamUrl(this))
@@ -32,6 +35,12 @@ class SettingsActivity : AppCompatActivity() {
 
         saveButton.setOnClickListener {
             saveSettings()
+        }
+
+        changePinButton.setOnClickListener {
+            val intent = Intent(this, PinEntryActivity::class.java)
+            intent.putExtra(PinEntryActivity.EXTRA_MODE, PinEntryActivity.MODE_CHANGE_CURRENT)
+            startActivity(intent)
         }
 
         // Focus the URL input for immediate D-pad editing

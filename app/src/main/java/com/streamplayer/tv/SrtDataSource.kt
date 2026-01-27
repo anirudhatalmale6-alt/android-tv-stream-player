@@ -29,6 +29,8 @@ class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
         private const val TAG = "SrtDataSource"
         private const val SRT_PAYLOAD_SIZE = 1316
         private const val DEFAULT_CONNECT_TIMEOUT_MS = 10000
+        // Default receive buffer 8MB to prevent audio dropouts
+        private const val DEFAULT_RCVBUF_SIZE = 8 * 1024 * 1024
     }
 
     // Buffer for received SRT data not yet consumed by ExoPlayer
@@ -105,11 +107,11 @@ class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
                 sock.setSockFlag(SockOpt.STREAMID, it)
             }
 
-            // Too-late packet drop
-            params["tlpktdrop"]?.let {
-                val enabled = it.isEmpty() || it == "1" || it.equals("true", ignoreCase = true)
-                sock.setSockFlag(SockOpt.TLPKTDROP, enabled)
-            }
+            // Too-late packet drop (enabled by default to prevent audio glitches)
+            val tlpktdrop = params["tlpktdrop"]?.let {
+                it.isEmpty() || it == "1" || it.equals("true", ignoreCase = true)
+            } ?: true
+            sock.setSockFlag(SockOpt.TLPKTDROP, tlpktdrop)
 
             // NAK report
             params["nakreport"]?.let {
@@ -161,13 +163,12 @@ class SrtDataSource : BaseDataSource(/* isNetwork = */ true) {
                 sock.setSockFlag(SockOpt.FC, it)
             }
 
-            // Send/recv buffer sizes
+            // Send/recv buffer sizes (default larger rcvbuf to prevent audio dropouts)
             params["sndbuf"]?.toIntOrNull()?.let {
                 sock.setSockFlag(SockOpt.SNDBUF, it)
             }
-            params["rcvbuf"]?.toIntOrNull()?.let {
-                sock.setSockFlag(SockOpt.RCVBUF, it)
-            }
+            val rcvBufSize = params["rcvbuf"]?.toIntOrNull() ?: DEFAULT_RCVBUF_SIZE
+            sock.setSockFlag(SockOpt.RCVBUF, rcvBufSize)
 
             // IP TOS / TTL
             params["iptos"]?.toIntOrNull()?.let {
