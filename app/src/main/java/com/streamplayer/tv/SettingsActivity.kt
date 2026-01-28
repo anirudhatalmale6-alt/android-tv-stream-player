@@ -23,6 +23,7 @@ class SettingsActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "SettingsActivity"
         const val REQUEST_CODE = 1001
+        private const val FILE_PICKER_REQUEST_CODE = 1002
     }
 
     private lateinit var urlInput: EditText
@@ -31,9 +32,9 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var changePinButton: Button
     private lateinit var loadFromUsbButton: Button
 
-    // File picker launcher using Storage Access Framework
+    // File picker launcher using GetContent (broader support than OpenDocument)
     private val filePickerLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocument()
+        ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
             loadUrlFromFile(uri)
@@ -75,11 +76,31 @@ class SettingsActivity : AppCompatActivity() {
     private fun openFilePicker() {
         Log.i(TAG, "Opening file picker for stream.txt")
         try {
-            // Launch file picker for text files
-            filePickerLauncher.launch(arrayOf("text/plain", "*/*"))
+            // Try GetContent first (broader support)
+            filePickerLauncher.launch("*/*")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to open file picker: ${e.message}", e)
-            Toast.makeText(this, "Failed to open file picker", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "GetContent failed: ${e.message}, trying ACTION_GET_CONTENT intent", e)
+            // Fallback to manual intent
+            try {
+                val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                    type = "*/*"
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                }
+                startActivityForResult(Intent.createChooser(intent, "Select stream.txt"), FILE_PICKER_REQUEST_CODE)
+            } catch (e2: Exception) {
+                Log.e(TAG, "All file picker methods failed: ${e2.message}", e2)
+                Toast.makeText(this, "No file picker available. Please install a file manager app.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == FILE_PICKER_REQUEST_CODE && resultCode == RESULT_OK) {
+            data?.data?.let { uri ->
+                loadUrlFromFile(uri)
+            }
         }
     }
 
