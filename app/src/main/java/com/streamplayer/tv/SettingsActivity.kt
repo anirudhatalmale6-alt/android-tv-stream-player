@@ -1,16 +1,18 @@
 package com.streamplayer.tv
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
-import android.os.Environment
 import android.util.Log
 import android.view.KeyEvent
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Switch
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import java.io.File
+import java.io.BufferedReader
+import java.io.InputStreamReader
 
 /**
  * Minimal settings screen for entering/updating the stream URL.
@@ -21,34 +23,6 @@ class SettingsActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "SettingsActivity"
         const val REQUEST_CODE = 1001
-        // Common USB mount paths on Android TV / STB devices (including Amlogic X98Q)
-        private val USB_PATHS = listOf(
-            // Amlogic devices (X98Q, etc.)
-            "/storage/udisk0",
-            "/storage/udisk1",
-            "/storage/usb0",
-            "/storage/usb1",
-            "/storage/usb-storage",
-            "/storage/USB",
-            "/storage/usbdisk",
-            "/storage/usbdisk0",
-            "/storage/udisk",
-            "/storage/external_storage/udisk0",
-            "/storage/external_storage/sda1",
-            "/storage/external_storage/sdb1",
-            // Generic Android paths
-            "/mnt/usb_storage",
-            "/mnt/usb",
-            "/mnt/usb0",
-            "/mnt/usb1",
-            "/mnt/media_rw",
-            "/mnt/media_rw/usb",
-            "/mnt/sdcard/usb",
-            // Other common paths
-            "/sdcard/usb",
-            "/data/usb"
-        )
-        private const val CONFIG_FILENAME = "stream.txt"
     }
 
     private lateinit var urlInput: EditText
@@ -56,6 +30,15 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var saveButton: Button
     private lateinit var changePinButton: Button
     private lateinit var loadFromUsbButton: Button
+
+    // File picker launcher using Storage Access Framework
+    private val filePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            loadUrlFromFile(uri)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,94 +65,43 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         loadFromUsbButton.setOnClickListener {
-            loadStreamUrlFromUsb()
+            openFilePicker()
         }
 
         // Focus the URL input for immediate D-pad editing
         urlInput.requestFocus()
     }
 
-    private fun loadStreamUrlFromUsb() {
-        Log.i(TAG, "Searching for stream.txt on USB drives...")
-
-        // Collect all potential storage directories
-        val storageDirs = mutableSetOf<File>()
-        val checkedPaths = mutableListOf<String>()
-
-        // Add known USB paths
-        USB_PATHS.forEach { path ->
-            storageDirs.add(File(path))
+    private fun openFilePicker() {
+        Log.i(TAG, "Opening file picker for stream.txt")
+        try {
+            // Launch file picker for text files
+            filePickerLauncher.launch(arrayOf("text/plain", "*/*"))
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to open file picker: ${e.message}", e)
+            Toast.makeText(this, "Failed to open file picker", Toast.LENGTH_SHORT).show()
         }
+    }
 
-        // Scan /storage/ for any mounted volumes (this catches UUID-named mounts like /storage/1234-ABCD)
-        val storageRoot = File("/storage")
-        if (storageRoot.exists() && storageRoot.isDirectory) {
-            storageRoot.listFiles()?.forEach { dir ->
-                if (dir.isDirectory && dir.name != "emulated" && dir.name != "self") {
-                    storageDirs.add(dir)
-                    Log.d(TAG, "Found storage mount: ${dir.absolutePath}")
+    private fun loadUrlFromFile(uri: Uri) {
+        Log.i(TAG, "Loading URL from file: $uri")
+        try {
+            contentResolver.openInputStream(uri)?.use { inputStream ->
+                val reader = BufferedReader(InputStreamReader(inputStream))
+                val url = reader.readLine()?.trim()
+
+                if (!url.isNullOrBlank()) {
+                    urlInput.setText(url)
+                    Toast.makeText(this, "URL loaded successfully", Toast.LENGTH_SHORT).show()
+                    Log.i(TAG, "Loaded URL: $url")
+                } else {
+                    Toast.makeText(this, "File is empty", Toast.LENGTH_SHORT).show()
+                    Log.w(TAG, "File is empty")
                 }
             }
-        }
-
-        // Scan /mnt/ for mounted volumes
-        val mntRoot = File("/mnt")
-        if (mntRoot.exists() && mntRoot.isDirectory) {
-            mntRoot.listFiles()?.forEach { dir ->
-                if (dir.isDirectory) {
-                    storageDirs.add(dir)
-                    // Check subdirectories (e.g., /mnt/media_rw/XXXX)
-                    dir.listFiles()?.forEach { subdir ->
-                        if (subdir.isDirectory) {
-                            storageDirs.add(subdir)
-                        }
-                    }
-                }
-            }
-        }
-
-        // Also scan /mnt/media_rw/ which is common on Android TV
-        val mediaRwRoot = File("/mnt/media_rw")
-        if (mediaRwRoot.exists() && mediaRwRoot.isDirectory) {
-            mediaRwRoot.listFiles()?.forEach { dir ->
-                if (dir.isDirectory) {
-                    storageDirs.add(dir)
-                    Log.d(TAG, "Found media_rw mount: ${dir.absolutePath}")
-                }
-            }
-        }
-
-        // Search for stream.txt in all potential locations
-        for (dir in storageDirs) {
-            if (!dir.exists() || !dir.isDirectory) continue
-
-            val configFile = File(dir, CONFIG_FILENAME)
-            checkedPaths.add(dir.absolutePath)
-            Log.d(TAG, "Checking: ${configFile.absolutePath}")
-
-            if (configFile.exists() && configFile.canRead()) {
-                try {
-                    val url = configFile.readLines().firstOrNull()?.trim()
-                    if (!url.isNullOrBlank()) {
-                        Log.i(TAG, "Found stream URL in ${configFile.absolutePath}")
-                        urlInput.setText(url)
-                        Toast.makeText(this, "Loaded from: ${dir.absolutePath}", Toast.LENGTH_LONG).show()
-                        return
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error reading ${configFile.absolutePath}: ${e.message}")
-                }
-            }
-        }
-
-        // Show which paths were checked (helpful for debugging)
-        val existingPaths = checkedPaths.filter { File(it).exists() }
-        Log.w(TAG, "stream.txt not found. Checked ${checkedPaths.size} paths. Existing: $existingPaths")
-
-        if (existingPaths.isNotEmpty()) {
-            Toast.makeText(this, "No stream.txt found. Checked: ${existingPaths.joinToString(", ")}", Toast.LENGTH_LONG).show()
-        } else {
-            Toast.makeText(this, "No USB drive detected", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error reading file: ${e.message}", e)
+            Toast.makeText(this, "Error reading file: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
