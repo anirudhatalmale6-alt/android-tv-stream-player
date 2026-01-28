@@ -3,23 +3,21 @@ package com.streamplayer.tv
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Handler
-import android.os.Looper
+import android.os.Build
 import android.util.Log
 
 /**
  * Launches the player automatically on device boot.
  * Handles various boot intents for compatibility with different Android TV boxes.
+ * Uses AutoStartService for more reliable startup on restricted devices.
  */
 class BootReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "BootReceiver"
-        // Delay before launching to let the system fully initialize
-        private const val LAUNCH_DELAY_MS = 5000L
-        // Track if we've already launched to avoid duplicate launches
+        // Track if we've already started to avoid duplicate launches
         @Volatile
-        private var hasLaunched = false
+        private var hasStarted = false
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -33,34 +31,43 @@ class BootReceiver : BroadcastReceiver() {
             "android.intent.action.QUICKBOOT_POWERON",
             "com.htc.intent.action.QUICKBOOT_POWERON",
             Intent.ACTION_USER_PRESENT,
-            Intent.ACTION_USER_UNLOCKED
+            Intent.ACTION_USER_UNLOCKED,
+            "com.streamplayer.tv.ALARM_RESTART"
         )
 
         if (action in bootActions) {
             // Prevent duplicate launches
-            if (hasLaunched) {
-                Log.i(TAG, "Already launched, ignoring duplicate boot broadcast")
+            if (hasStarted) {
+                Log.i(TAG, "Already started, ignoring duplicate broadcast")
                 return
             }
-            hasLaunched = true
+            hasStarted = true
 
-            Log.i(TAG, "Boot event detected ($action) — scheduling StreamPlayer launch in ${LAUNCH_DELAY_MS}ms")
+            Log.i(TAG, "Boot event detected ($action) — starting AutoStartService")
 
-            // Use a delay to let the system fully boot before launching
-            Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    Log.i(TAG, "Launching StreamPlayer now")
-                    val launchIntent = Intent(context, PlaybackActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                    }
-                    context.startActivity(launchIntent)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to launch StreamPlayer: ${e.message}", e)
-                    hasLaunched = false // Reset so it can try again
-                }
-            }, LAUNCH_DELAY_MS)
+            try {
+                // Start the AutoStartService which will handle launching the activity
+                AutoStartService.start(context)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start AutoStartService: ${e.message}", e)
+                // Fallback: try to launch activity directly
+                tryDirectLaunch(context)
+            }
+        }
+    }
+
+    private fun tryDirectLaunch(context: Context) {
+        try {
+            Log.i(TAG, "Attempting direct activity launch as fallback")
+            val launchIntent = Intent(context, PlaybackActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            }
+            context.startActivity(launchIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Direct launch also failed: ${e.message}", e)
+            hasStarted = false // Reset so alarm can try again
         }
     }
 }
