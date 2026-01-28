@@ -105,10 +105,30 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun loadUrlFromFile(uri: Uri) {
-        Log.i(TAG, "Loading URL from file: $uri")
+        Log.i(TAG, "Loading URL from file: $uri (scheme: ${uri.scheme})")
         try {
-            contentResolver.openInputStream(uri)?.use { inputStream ->
-                val reader = BufferedReader(InputStreamReader(inputStream))
+            val inputStream = when (uri.scheme) {
+                "content" -> {
+                    // Content URI - use content resolver
+                    contentResolver.openInputStream(uri)
+                }
+                "file" -> {
+                    // File URI - try direct file access
+                    val path = uri.path
+                    if (path != null) {
+                        java.io.FileInputStream(path)
+                    } else {
+                        null
+                    }
+                }
+                else -> {
+                    // Try content resolver as fallback
+                    contentResolver.openInputStream(uri)
+                }
+            }
+
+            inputStream?.use { stream ->
+                val reader = BufferedReader(InputStreamReader(stream))
                 val url = reader.readLine()?.trim()
 
                 if (!url.isNullOrBlank()) {
@@ -119,6 +139,9 @@ class SettingsActivity : AppCompatActivity() {
                     Toast.makeText(this, "File is empty", Toast.LENGTH_SHORT).show()
                     Log.w(TAG, "File is empty")
                 }
+            } ?: run {
+                Toast.makeText(this, "Could not open file", Toast.LENGTH_SHORT).show()
+                Log.e(TAG, "Could not open input stream for $uri")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error reading file: ${e.message}", e)
