@@ -19,6 +19,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import kotlin.math.abs
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.rtmp.RtmpDataSource
@@ -40,6 +41,9 @@ class PlaybackActivity : AppCompatActivity() {
         private const val INITIAL_RETRY_DELAY_MS = 2000L
         private const val MAX_RETRY_DELAY_MS = 30000L
         private const val STATUS_DISPLAY_DURATION_MS = 3000L
+        // A/V sync correction settings
+        private const val SYNC_CHECK_INTERVAL_MS = 30_000L // Check every 30 seconds
+        private const val MAX_DRIFT_THRESHOLD_MS = 3000L // Resync if drift exceeds 3 seconds
     }
 
     private lateinit var playerView: PlayerView
@@ -53,6 +57,14 @@ class PlaybackActivity : AppCompatActivity() {
     private var settingsOpen = false
 
     private val retryRunnable = Runnable { startPlayback() }
+
+    // Periodic sync check to prevent A/V drift over long playback sessions
+    private val syncCheckRunnable = object : Runnable {
+        override fun run() {
+            checkAndCorrectSync()
+            handler.postDelayed(this, SYNC_CHECK_INTERVAL_MS)
+        }
+    }
 
     // Launched when returning from SettingsActivity
     private val settingsLauncher = registerForActivityResult(
@@ -151,18 +163,18 @@ class PlaybackActivity : AppCompatActivity() {
     private fun initializePlayer() {
         if (player != null) return
 
-        // Optimized load control for live streaming to avoid audio underruns
+        // Optimized load control for live streaming
+        // Reduced buffer sizes to minimize A/V drift accumulation while still preventing audio dropouts
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 30_000,
-                /* maxBufferMs = */ 90_000,
-                /* bufferForPlaybackMs = */ 5_000,
-                /* bufferForPlaybackAfterRebufferMs = */ 8_000
+                /* minBufferMs = */ 15_000,     // Reduced from 30s to minimize drift
+                /* maxBufferMs = */ 30_000,     // Reduced from 90s to minimize drift
+                /* bufferForPlaybackMs = */ 3_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 5_000
             )
-            // Prioritize keeping buffer full to avoid audio dropouts
             .setPrioritizeTimeOverSizeThresholds(true)
-            // Larger back buffer for smooth playback
-            .setBackBuffer(/* backBufferDurationMs = */ 30_000, /* retainBackBufferFromKeyframe = */ true)
+            // Smaller back buffer - we don't need to seek backwards in live streams
+            .setBackBuffer(/* backBufferDurationMs = */ 10_000, /* retainBackBufferFromKeyframe = */ true)
             .build()
 
         player = ExoPlayer.Builder(this)
@@ -171,6 +183,9 @@ class PlaybackActivity : AppCompatActivity() {
             .apply {
                 playWhenReady = true
                 repeatMode = Player.REPEAT_MODE_OFF
+
+                // Configure for live playback - keep close to live edge
+                setSeekParameters(androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC)
 
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
@@ -186,6 +201,10 @@ class PlaybackActivity : AppCompatActivity() {
                             currentRetryDelay = INITIAL_RETRY_DELAY_MS
                             isReconnecting = false
                             loadingIndicator.visibility = View.GONE
+                            // Start periodic sync checking when playback begins
+                            startSyncChecking()
+                        } else {
+                            stopSyncChecking()
                         }
                     }
                 })
@@ -358,7 +377,57 @@ class PlaybackActivity : AppCompatActivity() {
         )
     }
 
+    private fun startSyncChecking() {
+        handler.removeCallbacks(syncCheckRunnable)
+        handler.postDelayed(syncCheckRunnable, SYNC_CHECK_INTERVAL_MS)
+        Log.i(TAG, "Started periodic sync checking")
+    }
+
+    private fun stopSyncChecking() {
+        handler.removeCallbacks(syncCheckRunnable)
+    }
+
+    /**
+     * Checks for A/V drift and corrects it by seeking to live edge.
+     * This prevents audio from drifting ahead of video during long playback sessions.
+     * The drift occurs because audio and video decoders can process at slightly different rates,
+     * and over hours this can accumulate to many seconds of desync.
+     */
+    private fun checkAndCorrectSync() {
+        val p = player ?: return
+
+        // Only check when actually playing
+        if (!p.isPlaying) return
+
+        val currentPosition = p.currentPosition
+        val duration = p.duration
+        val bufferedPosition = p.bufferedPosition
+
+        // For live streams, we want to stay close to the buffered edge
+        // If we've fallen behind too much, seek forward to catch up
+        if (bufferedPosition > 0 && currentPosition > 0) {
+            val behindLiveEdge = bufferedPosition - currentPosition
+
+            if (behindLiveEdge > MAX_DRIFT_THRESHOLD_MS) {
+                Log.w(TAG, "Detected drift: ${behindLiveEdge}ms behind live edge, seeking to catch up")
+                // Seek to near the live edge (leave a small buffer)
+                val targetPosition = bufferedPosition - 1000 // 1 second buffer from edge
+                p.seekTo(targetPosition)
+                showStatus("Syncing…")
+            } else {
+                Log.d(TAG, "Sync check OK: ${behindLiveEdge}ms behind live edge")
+            }
+        }
+
+        // Additional check: if playback speed has drifted, reset it
+        if (abs(p.playbackParameters.speed - 1.0f) > 0.01f) {
+            Log.w(TAG, "Playback speed drifted to ${p.playbackParameters.speed}, resetting to 1.0")
+            p.setPlaybackSpeed(1.0f)
+        }
+    }
+
     private fun releasePlayer() {
+        stopSyncChecking()
         player?.release()
         player = null
     }
