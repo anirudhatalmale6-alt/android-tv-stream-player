@@ -44,6 +44,9 @@ class PlaybackActivity : AppCompatActivity() {
         // A/V sync correction settings
         private const val SYNC_CHECK_INTERVAL_MS = 30_000L // Check every 30 seconds
         private const val MAX_DRIFT_THRESHOLD_MS = 3000L // Resync if drift exceeds 3 seconds
+        // Watchdog to detect stuck player after connection loss
+        private const val WATCHDOG_INTERVAL_MS = 10_000L // Check every 10 seconds
+        private const val MAX_BUFFERING_TIME_MS = 60_000L // Force restart if buffering > 60 seconds
     }
 
     private lateinit var playerView: PlayerView
@@ -56,13 +59,23 @@ class PlaybackActivity : AppCompatActivity() {
     private var isReconnecting = false
     private var settingsOpen = false
 
-    private val retryRunnable = Runnable { startPlayback() }
+    // Use fullRestartPlayback for reconnect to properly close SRT sockets
+    private val retryRunnable = Runnable { fullRestartPlayback() }
 
     // Periodic sync check to prevent A/V drift over long playback sessions
     private val syncCheckRunnable = object : Runnable {
         override fun run() {
             checkAndCorrectSync()
             handler.postDelayed(this, SYNC_CHECK_INTERVAL_MS)
+        }
+    }
+
+    // Watchdog to detect and recover from stuck player states
+    private var bufferingStartTime = 0L
+    private val watchdogRunnable = object : Runnable {
+        override fun run() {
+            checkPlayerHealth()
+            handler.postDelayed(this, WATCHDOG_INTERVAL_MS)
         }
     }
 
@@ -123,6 +136,8 @@ class PlaybackActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         handler.removeCallbacks(retryRunnable)
+        handler.removeCallbacks(syncCheckRunnable)
+        handler.removeCallbacks(watchdogRunnable)
         releasePlayer()
         PlaybackService.stop(this)
         super.onDestroy()
@@ -212,6 +227,9 @@ class PlaybackActivity : AppCompatActivity() {
 
         playerView.player = player
         playerView.useController = false // No transport controls visible
+
+        // Start watchdog to monitor player health
+        startWatchdog()
 
         startPlayback()
     }
@@ -312,17 +330,29 @@ class PlaybackActivity : AppCompatActivity() {
                 if (!isReconnecting) {
                     showStatus("Buffering…")
                 }
+                // Track when buffering started for watchdog
+                if (bufferingStartTime == 0L) {
+                    bufferingStartTime = System.currentTimeMillis()
+                    Log.i(TAG, "Buffering started")
+                }
             }
             Player.STATE_READY -> {
                 loadingIndicator.visibility = View.GONE
                 showStatus("Playing")
+                // Reset buffering timer
+                bufferingStartTime = 0L
             }
             Player.STATE_ENDED -> {
                 Log.w(TAG, "Stream ended — attempting reconnect")
+                bufferingStartTime = 0L
                 scheduleReconnect()
             }
             Player.STATE_IDLE -> {
-                // No-op
+                // Player is idle - might be stuck after error
+                if (!isReconnecting && player != null) {
+                    Log.w(TAG, "Player went IDLE unexpectedly — attempting reconnect")
+                    scheduleReconnect()
+                }
             }
         }
     }
@@ -387,6 +417,55 @@ class PlaybackActivity : AppCompatActivity() {
         handler.removeCallbacks(syncCheckRunnable)
     }
 
+    private fun startWatchdog() {
+        handler.removeCallbacks(watchdogRunnable)
+        handler.postDelayed(watchdogRunnable, WATCHDOG_INTERVAL_MS)
+        Log.i(TAG, "Started player health watchdog")
+    }
+
+    private fun stopWatchdog() {
+        handler.removeCallbacks(watchdogRunnable)
+    }
+
+    /**
+     * Watchdog function that detects stuck player states and forces recovery.
+     * This handles cases where the player gets stuck buffering forever after
+     * connection loss (especially common with SRT protocol).
+     */
+    private fun checkPlayerHealth() {
+        val p = player ?: return
+
+        // Check if stuck buffering for too long
+        if (bufferingStartTime > 0) {
+            val bufferingDuration = System.currentTimeMillis() - bufferingStartTime
+            if (bufferingDuration > MAX_BUFFERING_TIME_MS) {
+                Log.w(TAG, "Watchdog: Stuck buffering for ${bufferingDuration}ms, forcing full restart")
+                bufferingStartTime = 0L
+                handler.removeCallbacks(retryRunnable)
+                isReconnecting = false
+                showStatus("Connection lost — restarting…")
+                // Post to handler to avoid reentrant issues
+                handler.post { fullRestartPlayback() }
+                return
+            }
+        }
+
+        // Check if player is in unexpected IDLE state (not during reconnect)
+        if (!isReconnecting && p.playbackState == Player.STATE_IDLE) {
+            val url = StreamPrefs.getStreamUrl(this)
+            if (url.isNotBlank()) {
+                Log.w(TAG, "Watchdog: Player stuck in IDLE state, forcing reconnect")
+                scheduleReconnect()
+            }
+        }
+
+        // Check if player is in ERROR state but error wasn't handled
+        if (!isReconnecting && p.playerError != null) {
+            Log.w(TAG, "Watchdog: Unhandled player error detected, forcing reconnect")
+            scheduleReconnect()
+        }
+    }
+
     /**
      * Checks for A/V drift and corrects it by seeking to live edge.
      * This prevents audio from drifting ahead of video during long playback sessions.
@@ -428,6 +507,8 @@ class PlaybackActivity : AppCompatActivity() {
 
     private fun releasePlayer() {
         stopSyncChecking()
+        stopWatchdog()
+        bufferingStartTime = 0L
         player?.release()
         player = null
     }
