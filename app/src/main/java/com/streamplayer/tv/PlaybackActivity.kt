@@ -1,6 +1,9 @@
 package com.streamplayer.tv
 
 import android.app.Activity
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -47,6 +50,8 @@ class PlaybackActivity : AppCompatActivity() {
         // Watchdog to detect stuck player after connection loss
         private const val WATCHDOG_INTERVAL_MS = 10_000L // Check every 10 seconds
         private const val MAX_BUFFERING_TIME_MS = 60_000L // Force restart if buffering > 60 seconds
+        // Full app restart after repeated failures
+        private const val MAX_RETRY_ATTEMPTS = 5 // After 5 failed retries, restart the entire app
     }
 
     private lateinit var playerView: PlayerView
@@ -58,6 +63,7 @@ class PlaybackActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var isReconnecting = false
     private var settingsOpen = false
+    private var retryAttempts = 0 // Track consecutive failed connection attempts
 
     // Use fullRestartPlayback for reconnect to properly close SRT sockets
     private val retryRunnable = Runnable { fullRestartPlayback() }
@@ -215,6 +221,7 @@ class PlaybackActivity : AppCompatActivity() {
                         if (isPlaying) {
                             currentRetryDelay = INITIAL_RETRY_DELAY_MS
                             isReconnecting = false
+                            retryAttempts = 0 // Reset retry counter on successful playback
                             loadingIndicator.visibility = View.GONE
                             // Start periodic sync checking when playback begins
                             startSyncChecking()
@@ -374,8 +381,19 @@ class PlaybackActivity : AppCompatActivity() {
             return
         }
 
+        retryAttempts++
+        Log.i(TAG, "Retry attempt $retryAttempts of $MAX_RETRY_ATTEMPTS")
+
+        // If we've tried too many times, restart the entire app
+        if (retryAttempts >= MAX_RETRY_ATTEMPTS) {
+            Log.w(TAG, "Max retry attempts reached ($retryAttempts), restarting entire app")
+            showStatus("Connection failed — restarting app…")
+            handler.postDelayed({ restartApp() }, 2000) // Give user time to see message
+            return
+        }
+
         Log.i(TAG, "Scheduling reconnect in ${currentRetryDelay}ms")
-        showStatus("Reconnecting in ${currentRetryDelay / 1000}s…")
+        showStatus("Reconnecting (${retryAttempts}/$MAX_RETRY_ATTEMPTS)…")
         loadingIndicator.visibility = View.VISIBLE
 
         handler.postDelayed(retryRunnable, currentRetryDelay)
@@ -511,5 +529,40 @@ class PlaybackActivity : AppCompatActivity() {
         bufferingStartTime = 0L
         player?.release()
         player = null
+    }
+
+    /**
+     * Fully restart the app when reconnection attempts fail repeatedly.
+     * This clears all network state, SRT sockets, and gives Android a fresh start.
+     */
+    private fun restartApp() {
+        Log.i(TAG, "Performing full app restart")
+
+        // Create an intent to restart the app
+        val intent = packageManager.getLaunchIntentForPackage(packageName)
+        intent?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+
+        // Schedule restart using AlarmManager for reliability
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        alarmManager.set(
+            AlarmManager.RTC,
+            System.currentTimeMillis() + 500, // Restart in 500ms
+            pendingIntent
+        )
+
+        // Kill the current process
+        releasePlayer()
+        PlaybackService.stop(this)
+        finishAffinity()
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 }
